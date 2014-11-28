@@ -1,0 +1,31 @@
+goapp:
+  build: .
+  links:
+  - db
+  volumes:
+  - .:/gopath
+  ports:
+  - "8800:8800"
+db:
+  image: mysql:latest
+  command: mysqld --datadir=/var/lib/mysql --user=mysql --lower_case_table_names=1 --socket=/var/lib/mysql/mysql.sock
+  ports:
+  - "3306:3306"
+  environment:
+  - MYSQL_ROOT_PASSWORD=12345678
+  - MYSQL_DATABASE=myData
+  - MYSQL_USER=test
+  - MYSQL_PASSWORD=123456
+dbclient:
+  image: mysql:latest
+  links:
+  - db
+  command: sh -c 'exec mysql -h"$DB_PORT_3306_TCP_ADDR" -P"$DB_PORT_3306_TCP_PORT" -uroot -p"$DB_ENV_MYSQL_ROOT_PASSWORD"'
+dbshell:
+  image: mysql:latest
+  links:
+  - db
+  volumes_from:
+  - db
+  working_dir: /var/lib/mysql
+  command: bash
