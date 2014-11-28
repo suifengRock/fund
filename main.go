@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"os"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
 	_ "github.com/go-sql-driver/mysql"
@@ -20,8 +23,8 @@ type FundInfo struct {
 type Worth struct {
 	Id                int64
 	Date              string
-	RealWorth         float32
-	AccumulativeWorth float32
+	RealWorth         string
+	AccumulativeWorth string
 	FundCode          string `xorm:"index"`
 }
 
@@ -33,7 +36,7 @@ func NewFundInfo(code string, name string, style string) (obj *FundInfo) {
 	return
 }
 
-func NewWorth(date string, realWorth float32, accWorth float32, code string) (obj *Worth) {
+func NewWorth(date string, realWorth string, accWorth string, code string) (obj *Worth) {
 	obj = new(Worth)
 	obj.Date = date
 	obj.RealWorth = realWorth
@@ -68,12 +71,12 @@ func sync(engine *xorm.Engine) error {
 func main() {
 
 	orm, err := mysqlEngine()
-	defer orm.Close()
 	if err != nil {
 		fmt.Println(err)
 		panic(err)
 		return
 	}
+	defer orm.Close()
 	err = sync(orm)
 	if err != nil {
 		panic(err)
@@ -82,8 +85,77 @@ func main() {
 	}
 	baseData, _ := getBaseFundInfoByTT()
 	orm.Insert(baseData)
+	for _, obj := range baseData {
+		worthList, _ := getFundHistory(obj.Code)
+		orm.Insert(worthList)
+	}
 	fmt.Println("update......ok")
 
+}
+func InitFundHistory(baseData []*FundInfo, orm *xorm.Engine) error {
+
+	for _, obj := range baseData {
+		worthData, err := getFundHistory(obj.Code)
+		if err != nil {
+			return err
+		}
+		orm.Insert(worthData)
+	}
+	return nil
+}
+
+func getFundHistory(code string) ([]*Worth, error) {
+
+	url := "http://fund.eastmoney.com/f10/F10DataApi.aspx?"
+	datatype := "type=lsjz&"
+	fundCode := "code=" + code + "&"
+	page := "page=1&"
+	per := "per=50Z&"
+	// sdate :="sdate=&"
+	// edate := "edate=&"
+	// rt := "rt=0.04558350201064887"
+
+	reqUrl := url + datatype + fundCode + page + per
+	fmt.Println(reqUrl)
+	req, err := http.Get(reqUrl)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	defer req.Body.Close()
+
+	body, err := ioutil.ReadAll(req.Body)
+	reqBody := string(body)
+	html := strings.Split(reqBody, "\"")[1]
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(html))
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	worthData := make([]*Worth, 0)
+	doc.Find("table tbody tr").Each(func(i int, sl *goquery.Selection) {
+
+		date := ""
+		realworth := ""
+		accWorth := ""
+		sl.Find("td").Each(func(k int, sel *goquery.Selection) {
+			if k == 0 {
+				date = sel.Text()
+				return
+			}
+			if k == 1 {
+				realworth = sel.Text()
+				return
+			}
+			if k == 2 {
+				accWorth = sel.Text()
+				return
+			}
+		})
+		obj := NewWorth(date, realworth, accWorth, code)
+		worthData = append(worthData, obj)
+	})
+	return worthData, nil
 }
 
 func getBaseFundInfoByTT() ([]*FundInfo, error) {
@@ -112,9 +184,11 @@ func getBaseFundInfoByTT() ([]*FundInfo, error) {
 
 			if key == 3 {
 				code = sel.Text()
+				return
 			}
 			if key == 4 {
 				name = sel.Find("nobr a").First().Text()
+				return
 			}
 		})
 		obj := NewFundInfo(code, cd.ConvString(name), "")
